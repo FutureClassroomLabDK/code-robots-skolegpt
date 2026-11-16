@@ -9,6 +9,12 @@
  * Emits progress (stages 1–3), content (stage 4 tokens), then done — or a
  * single error.
  *
+ * The multi-stage pipeline is currently OFF (PIPELINE_ENABLED = false): the
+ * request goes straight to stage 4 with the full system prompt (all doc
+ * bundles for the hardware, no outline) plus the raw chat history, and no
+ * progress events are emitted. Re-enable by flipping the constant or via
+ * add_filter( 'coderobots_tutor_pipeline_enabled', '__return_true' ).
+ *
  * Prompt TEXT lives in two places:
  *   - hardware doc bundles / levels: prompts/tutor-prompts.json, generated at
  *     build time from the repo's prompts/*.py (scripts/export_tutor_prompts.py);
@@ -20,6 +26,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 class CodeRobots_Tutor {
+
+	/** Run summarize / doc routing / outline before the final answer. */
+	const PIPELINE_ENABLED = false;
 
 	const SUMMARIZE_THRESHOLD = 5000;
 
@@ -50,6 +59,7 @@ class CodeRobots_Tutor {
 			'docs'        => "Relevant dokumentation:\n{docs}",
 			'outline'     => "Skitse (brug denne som plan for dit svar):\n{outline}",
 			'instruction' => 'Skriv svaret paa dansk. Inkluder en kodeblok formateret som ```{code_lang} med danske kommentarer. Foelg skitsen og forklar kort omkring koden saa eleven forstaar hvad der sker.',
+			'instruction_direct' => 'Skriv svaret paa dansk. Inkluder en kodeblok formateret som ```{code_lang} med danske kommentarer. Forklar kort omkring koden saa eleven forstaar hvad der sker.',
 		),
 		'en' => array(
 			'header'      => 'You are a friendly programming tutor. Write ALL replies in English. Write code comments in English. Never tell the student what their level is called.',
@@ -57,6 +67,7 @@ class CodeRobots_Tutor {
 			'docs'        => "Relevant documentation:\n{docs}",
 			'outline'     => "Outline (use this as your plan for the answer):\n{outline}",
 			'instruction' => 'Write the answer in English. Include a code block formatted as ```{code_lang} with English comments. Follow the outline and briefly explain the code so the student understands what is going on.',
+			'instruction_direct' => 'Write the answer in English. Include a code block formatted as ```{code_lang} with English comments. Briefly explain the code so the student understands what is going on.',
 		),
 	);
 
@@ -106,6 +117,12 @@ class CodeRobots_Tutor {
 	public function run( array $req, callable $emit ) {
 		$history = $req['history'];
 		try {
+			if ( ! apply_filters( 'coderobots_tutor_pipeline_enabled', self::PIPELINE_ENABLED ) ) {
+				// Pipeline off: one streamed call with every doc bundle and no outline.
+				$this->stream_final( $req, $history, array_keys( (array) $this->prompts['hw'][ $req['hw_mode'] ]['bundles'] ), '', $emit );
+				return;
+			}
+
 			// 1. SummarizeIfOver
 			$tokens = self::count_messages_tokens( $history );
 			if ( $tokens <= self::SUMMARIZE_THRESHOLD ) {
@@ -144,18 +161,7 @@ class CodeRobots_Tutor {
 			}
 
 			// 4. FinalAnswer (streamed)
-			$this->llm->stream(
-				$this->stage_messages( 'final', $req, $history, $selected, $outline ),
-				function ( $token ) use ( $emit ) {
-					return $emit(
-						array(
-							'type'    => 'content',
-							'content' => $token,
-						)
-					);
-				}
-			);
-			$emit( array( 'type' => 'done' ) );
+			$this->stream_final( $req, $history, $selected, $outline, $emit );
 		} catch ( Throwable $e ) {
 			$emit(
 				array(
@@ -164,6 +170,21 @@ class CodeRobots_Tutor {
 				)
 			);
 		}
+	}
+
+	private function stream_final( array $req, array $history, array $selected, $outline, callable $emit ) {
+		$this->llm->stream(
+			$this->stage_messages( 'final', $req, $history, $selected, $outline ),
+			function ( $token ) use ( $emit ) {
+				return $emit(
+					array(
+						'type'    => 'content',
+						'content' => $token,
+					)
+				);
+			}
+		);
+		$emit( array( 'type' => 'done' ) );
 	}
 
 	private static function progress( $stage, array $payload ) {
@@ -295,7 +316,7 @@ class CodeRobots_Tutor {
 				'' !== $docs ? str_replace( '{docs}', $docs, $tpl['docs'] ) : '',
 				$hw_prompts['examples'],
 				'' !== $outline ? str_replace( '{outline}', $outline, $tpl['outline'] ) : '',
-				str_replace( '{code_lang}', $code_lang, $tpl['instruction'] )
+				str_replace( '{code_lang}', $code_lang, '' !== $outline ? $tpl['instruction'] : $tpl['instruction_direct'] )
 			);
 		}
 
