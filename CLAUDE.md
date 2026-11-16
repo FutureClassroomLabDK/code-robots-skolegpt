@@ -126,4 +126,4 @@ of truth); stage templates in `class-coderobots-tutor.php`.
 
 ## Styling
 
-Plain CSS files co-located with components. Tailwind CSS v4 is also configured (via `@tailwindcss/vite`) but used sparingly.
+Plain CSS files co-located with components.

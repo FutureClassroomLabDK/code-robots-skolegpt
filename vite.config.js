@@ -1,5 +1,4 @@
 import { defineConfig } from 'vite'
-import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 
 // LEGO Education mode runs Pyodide in a Web Worker and uses SharedArrayBuffer
@@ -15,7 +14,6 @@ const crossOriginIsolationHeaders = {
 
 export default defineConfig({
     plugins: [
-        tailwindcss(),
         react(),
     ],
     server: {

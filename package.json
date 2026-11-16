@@ -15,7 +15,6 @@
     "@codemirror/lang-python": "^6.2.1",
     "@codemirror/view": "^6.38.5",
     "@microbit/microbit-connection": "^0.1.0",
-    "@tailwindcss/vite": "^4.2.1",
     "@uiw/react-codemirror": "^4.25.2",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
@@ -23,8 +22,7 @@
     "jszip": "^3.10.1",
     "marked": "^11.1.1",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1",
-    "tailwindcss": "^4.2.1"
+    "react-dom": "^19.1.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",
