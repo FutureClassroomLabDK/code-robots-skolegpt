@@ -1,6 +1,7 @@
 """Coding-level prompts injected into Outline / FinalAnswer.
 
-Lifted from src/prompts/codingLevels.js. The Danish-only directive that lived in
+Lifted from src/prompts/codingLevels.js. Hardware-specific defaults (ports,
+speeds, display) live in each hardware PREAMBLE, not here. The Danish-only directive that lived in
 LEVEL_INSTRUCTION_PREFIX is omitted here — language is now set by the FinalAnswer
 system prompt, not the level guidance.
 """
@@ -10,10 +11,9 @@ LEVEL_PROMPTS: dict[str, str] = {
         "You are working with a beginner coder. Prioritise readable, beginner-friendly "
         "code over optimal solutions; only help with the stated goal and avoid extra code. "
         "Keep things procedural and sequential. Avoid async/await/runloop when possible. "
-        "Use clear variable names (motor_1 = port.A, not port_A = port.A). "
-        "Defaults when unspecified: motors on port A (and B for two-motor code), velocity 600, "
-        "duration 5 s, run-for-degrees 90, beep frequency 659, display via the 5x5 light_matrix. "
-        "Don't tell the student what the defaults are unless asked. "
+        "Use clear variable names (e.g. left_motor, not m1). "
+        "When the student leaves something unspecified, use the hardware defaults given with "
+        "the hardware description. Don't tell the student what the defaults are unless asked. "
         "Comment the code. Encourage the student to ask about anything unclear. "
         "When troubleshooting, suggest one simple check at a time."
     ),
@@ -25,9 +25,8 @@ LEVEL_PROMPTS: dict[str, str] = {
         "when it meaningfully removes duplication. Introduce debugging via print statements, "
         "light_matrix output, or beep. "
         "Avoid async/await/runloop when possible. "
-        "Defaults when unspecified: motors on port A (and B for two-motor code), velocity 600, "
-        "duration 5 s, run-for-degrees 90, beep frequency 659, display via the 5x5 light_matrix. "
-        "Don't tell the student what the defaults are unless asked. "
+        "When the student leaves something unspecified, use the hardware defaults given with "
+        "the hardware description. Don't tell the student what the defaults are unless asked. "
         "Comment the code. When troubleshooting, suggest one simple check at a time."
     ),
     "experienced": (
@@ -38,13 +37,13 @@ LEVEL_PROMPTS: dict[str, str] = {
         "Style: small named motion primitives like drive_ms(...), turn_deg(...) with 1-3 parameters; "
         "simple state machines (SEARCH -> APPROACH -> DOCK); tunable constants at the top "
         "(SPEED, TURN_VEL, SIDE_MS); sensor readings purposeful, one path per loop. "
-        "Prefer velocity control via motor.run(port, velocity) and position via motor.absolute_position(port) "
-        "over time-only motion. "
-        "Concurrency is acceptable: 1-2 tasks via runloop.run(...), with runloop.sleep_ms(...). "
+        "Prefer speed control and motor position feedback over time-only motion. "
+        "Concurrency is acceptable where the hardware supports it (e.g. 1-2 tasks via runloop.run(...) on SPIKE). "
         "Avoid CPU-bound spinning. "
         "Lightweight debugging: brief print(...) traces, sound.beep(...) markers, or "
-        "light_matrix.write(...)/show(...) cues. Keep signals sparse and temporary. "
-        "Default unspecified: two-motor drive base on ports A & B, moderate speeds (30-40); "
-        "state assumptions explicitly. Strict API compliance — no unsupported libraries."
+        "display or light cues. Keep signals sparse and temporary. "
+        "When unspecified, assume a two-motor drive base and the hardware defaults given with the "
+        "hardware description, at moderate speed; state assumptions explicitly. "
+        "Strict API compliance — no unsupported libraries."
     ),
 }

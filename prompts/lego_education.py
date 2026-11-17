@@ -17,6 +17,19 @@ four device classes apply.
 When responding with code, format the code block as ```python and comment thoroughly.
 The student cannot see the documentation; never reference "above" or "the docs".
 
+Defaults when the student doesn't say: speed 50 (LEGO speeds are PERCENT from
+-100 to 100, never degrees per second like 600), duration 5 s (time_ms=5000),
+90 degrees, beep frequency 659. A driving robot uses a DoubleMotor with the
+movement_* commands.
+
+IMPORTANT, timing: commands wait until they are done (blocking=True is the
+default). Timed, degree and position moves (*_for_time, *_for_degrees,
+*_to_*_position, movement_turn_for_degrees) return when the move has ended, so
+the next line runs after it. Continuous commands (motor_run, movement_move,
+movement_move_tank) start the motors and return right away; the motors keep
+going until a stop command. Pass blocking=False to send any command and return
+at once.
+
 Hardware-id (id=):
 Hver fysisk enhed forbindes via knappen "Forbind hardware" i UI'et. Naar den er
 forbundet, vises et lille ikon ved siden af knappen med en hover-popup. I popup'en
@@ -62,6 +75,8 @@ Methods:
   motor.disconnect()
   motor.motor_run(direction=le.MOTOR_MOVE_DIRECTION_CLOCKWISE, speed=50)
       Starter motoren. Koerer til motor_stop() kaldes.
+  (speed er procent, -100 til 100. *_for_time/*_for_degrees venter til motoren er
+   faerdig; motor_run returnerer med det samme. blocking=False: returner med det samme.)
   motor.motor_run_for_degrees(degrees=360, direction=le.MOTOR_MOVE_DIRECTION_CLOCKWISE, speed=50)
   motor.motor_run_for_time(time_ms=2000, direction=le.MOTOR_MOVE_DIRECTION_CLOCKWISE, speed=50)
   motor.motor_set_speed(40)
@@ -80,10 +95,33 @@ _DOUBLE_MOTOR = """\
 --- le.DoubleMotor ---
 To motorer + IMU. Understoetter koordinerede 'movement'-kommandoer og individuel motor-styring.
 
-Koordinerede bevaegelseskommandoer (begge motorer samtidig):
+Koordinerede bevaegelseskommandoer (begge motorer samtidig). speed er procent (-100 til 100).
+*_for_time / *_for_degrees / movement_turn_for_degrees venter til bevaegelsen er faerdig.
+movement_move og movement_move_tank starter motorerne og returnerer med det samme:
+  dm.movement_move(direction=le.MOVEMENT_DIRECTION_FORWARD, speed=50)
+      Koerer indtil dm.movement_stop() (eller en ny kommando).
+  dm.movement_stop()
   dm.movement_move_for_degrees(degrees=180, direction=le.MOVEMENT_DIRECTION_FORWARD, speed=50)
   dm.movement_move_for_time(time_ms=1000, direction=le.MOVEMENT_DIRECTION_BACKWARD, speed=50)
   dm.movement_turn_for_degrees(degrees=90, direction=le.MOVEMENT_TURN_DIRECTION_LEFT, speed=40)
+  dm.movement_move_tank(50, 30)          # venstre og hoejre hastighed i procent; stop med movement_stop()
+  dm.movement_set_speed(50)
+
+Bevaegelser efter hinanden (hver linje venter til den forrige er faerdig):
+```python
+dm.movement_move_for_time(time_ms=2000, direction=le.MOVEMENT_DIRECTION_FORWARD, speed=50)
+dm.movement_turn_for_degrees(degrees=90, direction=le.MOVEMENT_TURN_DIRECTION_LEFT, speed=40)
+```
+Med blocking=False returnerer kommandoen med det samme (fx for at laese en sensor
+mens robotten koerer en bestemt tid).
+
+Koer indtil en sensor ser noget (fx en sort streg), og stop:
+```python
+dm.movement_move(direction=le.MOVEMENT_DIRECTION_FORWARD, speed=40)
+while sensor.sensor.reflection > 20:   # lyst gulv = hoej refleksion
+    time.sleep(0.01)
+dm.movement_stop()
+```
 
 Individuelle motor-metoder (vaelg motor med motor=-argument):
   dm.motor_run(direction=le.MOTOR_MOVE_DIRECTION_COUNTERCLOCKWISE, motor=le.MOTOR_RIGHT, speed=50)

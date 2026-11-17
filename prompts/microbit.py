@@ -11,6 +11,9 @@ exposed via 'from microbit import *'.
 
 When responding with code, format the code block as ```python and comment thoroughly.
 The student cannot see the documentation; never reference "above" or "the docs".
+
+Defaults when the student doesn't say: show output on the 5x5 LED display,
+duration 5 s, pause with sleep(ms), sounds via the music module.
 """
 
 _DISPLAY_AUDIO = """\

@@ -12,6 +12,10 @@ MicroPython versions plus the modules described in the bundles below.
 
 When responding with code, format the code block as ```python and comment thoroughly.
 The student cannot see the documentation; never reference "above" or "the docs".
+
+Defaults when the student doesn't say: motors on port A (and B for two-motor
+code), velocity 600 (degrees per second), duration 5 s, run-for-degrees 90, beep
+frequency 659 Hz, display via the 5x5 light_matrix.
 """
 
 _MOTORS = """\

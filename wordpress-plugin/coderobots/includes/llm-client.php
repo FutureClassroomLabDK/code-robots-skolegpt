@@ -90,5 +90,13 @@ interface CodeRobots_LLM_Reasoning_Client {
 	 * @param callable|null $callback function( string $delta ): bool|void
 	 */
 	public function set_reasoning_callback( $callback );
+
+	/**
+	 * Reasoning effort for later requests ('low' | 'medium' | 'high'; sent as
+	 * the OpenAI-style `reasoning_effort` field). '' = provider default.
+	 *
+	 * @param string $effort
+	 */
+	public function set_reasoning_effort( $effort );
 }
 
