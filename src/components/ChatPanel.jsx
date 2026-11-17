@@ -383,6 +383,13 @@ const ChatPanel = ({ onReplaceCode, getCodeContent, getConsoleContent }) => {
             } else if (step.stage === 'reasoning') {
               label = t('thinkingReasoning').replace('{turn}', p.turn);
               detail = p.text;
+            } else if (step.stage === 'reasoning_loop') {
+              label = t('thinkingLoop');
+              detail = {
+                draft: t('thinkingLoopDraft'),
+                retry: t('thinkingLoopRetry'),
+                gave_up: t('thinkingLoopGaveUp'),
+              }[p.next] || null;
             } else if (step.stage === 'tool_call') {
               // Agent loop: the model asked to run its code in the simulator.
               label = t('thinkingToolCall')

@@ -88,12 +88,25 @@ class CodeRobots_Tutor {
 	 */
 	const AGENT_MAX_TOKENS = 12000;
 
+	/**
+	 * Sampling temperature for agent turns. Gemma 4's recommended 1.0: thinking
+	 * models at low temperature fall into endless "wait, I should…" loops.
+	 */
+	const AGENT_TEMPERATURE = 1.0;
+
+	/** Loop guard: abort a turn whose reasoning repeats one sentence this often… */
+	const LOOP_REPEATS = 5;
+	/** …or grows past this many characters (normal turns use ~5-15k). */
+	const LOOP_MAX_CHARS = 40000;
+
 	/** Reasoning effort for agent turns (OpenAI-style; filter coderobots_tutor_agent_reasoning_effort, '' = provider default). */
 	const AGENT_REASONING_EFFORT = 'low';
 
 	/** Agent loop protocol (system prompt) and the simulator-result turns. */
 	const AGENT_TEMPLATES = array(
 		'da' => array(
+			'loop_draft'  => 'Min tænkning gik i ring, så jeg tester mit seneste udkast.',
+			'loop_retry'  => 'Din forrige taenkning gik i ring og blev stoppet. Overvej ikke flere alternativer, og skriv ikke koden om i din taenkning. Taenk meget kort: saet din bedste kode i JSON-objektet nu. Hvis du har koersler tilbage i simulatoren, saa brug action "run" saa simulatoren kan tjekke den.',
 			'instruction' => "SAADAN ARBEJDER DU: Du er en kode-agent. Hvert svar du skriver er ET JSON-objekt og intet andet (ingen tekst udenfor):\n{\"code\": \"...\", \"action\": \"run\" eller \"done\", \"scenario\": \"...\", \"explanation\": \"...\"}\n- code: hele Python-programmet til elevens {hw} (hele filen, ikke et udsnit) med korte danske kommentarer.\n- action \"run\": test koden i en tekst-simulator af robotten. Du faar en tidslinje tilbage over hvad der skete (motorer, display, lyde, print, robottens position, fejl med linjenumre). Brug den til at tjekke at programmet virkelig goer det eleven bad om.\n- action \"done\": koden er faerdig. Den vises for eleven sammen med forklaringen.\n- scenario: den simulerede opstilling koden koeres i. Vaelg den der ligner elevens robot og opgave mest:\n{scenarios}\n- explanation: ved \"done\": en kort forklaring til eleven paa dansk (2-5 saetninger, gerne markdown men ingen kodeblokke), som vises over koden. Ved \"run\": én linje om hvad du vil tjekke.\nDu har hoejst {max_runs} koersler i simulatoren. Koer normalt koden mindst én gang foer \"done\". Naar resultatet passer med det eleven bad om, svar \"done\" med det samme. Simulatoren er en tilnaermelse af den rigtige robot: hvis den kun fejler fordi dens robot er bygget anderledes end elevens (fx andre porte), saa behold elevens opstilling og svar \"done\".\nHvis opgaven er tvetydig, eller hardwaren ikke kan goere praecis det eleven beder om, saa vaelg den mest sandsynlige tolkning, skriv din antagelse i én saetning i forklaringen, og overvej ikke flere alternativer.\nTjek ikke koden i hovedet, og skriv den ikke ud i din taenkning foerst: skriv den i \"code\" og koer den. Simulatoren viser hvad der er galt.\nEleven kender ikke til simulatoren: naevn den ALDRIG i forklaringen eller i kodens kommentarer, og skriv koden til den rigtige robot.",
 			'result'      => "SIMULATOR-RESULTAT (koersel {run} af {max_runs}, scenario {scenario}):\n{trace}",
 			'next'        => 'Du har {left} koersel/koersler tilbage. Goer programmet det eleven bad om? Hvis ja, svar med action "done" og forklaringen til eleven. Hvis nej, ret koden og svar med action "run".',
@@ -102,6 +115,8 @@ class CodeRobots_Tutor {
 			'fallback'    => 'Her er mit bedste bud paa et program. Det virker maaske ikke helt endnu, saa test det paa robotten.',
 		),
 		'en' => array(
+			'loop_draft'  => 'My thinking went in circles, so I am testing my latest draft.',
+			'loop_retry'  => 'Your previous reasoning went in circles and was stopped. Do not reconsider alternatives or redraft the code in your thinking. Keep your thinking very short: put your best code in the JSON object now. If you have simulator runs left, use action "run" so the simulator can check it.',
 			'instruction' => "HOW YOU WORK: You are a coding agent. Every reply you write is ONE JSON object and nothing else (no text outside it):\n{\"code\": \"...\", \"action\": \"run\" or \"done\", \"scenario\": \"...\", \"explanation\": \"...\"}\n- code: the complete Python program for the student's {hw} (the whole file, not a fragment) with short English comments.\n- action \"run\": test the code in a text simulator of the robot. You get back a timeline of what happened (motors, display, sounds, prints, robot position, errors with line numbers). Use it to check that the program really does what the student asked.\n- action \"done\": the code is finished. It is shown to the student together with the explanation.\n- scenario: the simulated setup to run the code in. Pick the one closest to the student's robot and task:\n{scenarios}\n- explanation: with \"done\": a short explanation for the student in English (2-5 sentences, markdown allowed but no code blocks), shown above the code. With \"run\": one line on what you want to check.\nYou have at most {max_runs} simulator runs. Normally run the code at least once before \"done\". When the result matches what the student asked, answer \"done\" straight away. The simulator approximates the real robot: if it only fails because its robot is built differently from the student's (e.g. other ports), keep the student's setup and answer \"done\".\nIf the request is ambiguous, or the hardware cannot do exactly what is asked, pick the most likely meaning, state your assumption in one sentence of the explanation, and do not weigh further alternatives.\nDo not check the code in your head or write it out in your thinking first: put it in \"code\" and run it. The simulator shows what is wrong.\nThe student does not know about the simulator: NEVER mention it in the explanation or in code comments, and write the code for the real robot.",
 			'result'      => "SIMULATOR RESULT (run {run} of {max_runs}, scenario {scenario}):\n{trace}",
 			'next'        => 'You have {left} run(s) left. Does the program do what the student asked? If yes, reply with action "done" and the explanation for the student. If not, fix the code and reply with action "run".',
@@ -129,6 +144,12 @@ class CodeRobots_Tutor {
 	private $reasoning_buf = '';
 	/** @var float */
 	private $reasoning_flushed = 0.0;
+	/** @var bool Watch agent turns' reasoning for loops. */
+	private $guard_loops = false;
+	/** @var string This turn's reasoning so far (loop guard). */
+	private $turn_reasoning = '';
+	/** @var bool The loop guard stopped the current call. */
+	private $loop_stopped = false;
 
 	public function __construct( CodeRobots_LLM_Client $llm, array $prompts, $simulator = null, $on_idle = null ) {
 		$this->llm       = $llm;
@@ -266,9 +287,41 @@ class CodeRobots_Tutor {
 	public function on_reasoning( $delta ) {
 		$this->reasoning_buf .= (string) $delta;
 		if ( strlen( $this->reasoning_buf ) >= 200 || microtime( true ) - $this->reasoning_flushed >= 0.25 ) {
+			if ( $this->guard_loops ) {
+				$this->turn_reasoning .= $this->reasoning_buf;
+				if ( self::is_looping( $this->turn_reasoning ) ) {
+					$this->flush_reasoning();
+					$this->loop_stopped = true;
+					return false; // Stops the LLM request.
+				}
+			}
 			return $this->flush_reasoning();
 		}
 		return true;
+	}
+
+	/**
+	 * True when reasoning is going in circles: some sentence or line (25+
+	 * chars, compared ignoring case and punctuation; split only at line breaks
+	 * and sentence ends, so code like dm.movement_move(...) stays whole) recurs LOOP_REPEATS
+	 * times in the recent text, or the reasoning is far longer than normal.
+	 */
+	private static function is_looping( $text ) {
+		if ( strlen( $text ) > self::LOOP_MAX_CHARS ) {
+			return true;
+		}
+		$counts = array();
+		foreach ( preg_split( '/\n+|(?<=[.!?])\s+/', substr( $text, -8000 ) ) as $sentence ) {
+			$key = trim( preg_replace( '/[^a-z0-9\x{00e6}\x{00f8}\x{00e5}]+/u', ' ', mb_strtolower( $sentence, 'UTF-8' ) ) );
+			if ( strlen( $key ) < 25 ) {
+				continue;
+			}
+			$counts[ $key ] = isset( $counts[ $key ] ) ? $counts[ $key ] + 1 : 1;
+			if ( $counts[ $key ] >= self::LOOP_REPEATS ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private function flush_reasoning() {
@@ -291,6 +344,8 @@ class CodeRobots_Tutor {
 	/** Start a new model call: reasoning after this belongs to a new turn. */
 	private function next_turn() {
 		$this->flush_reasoning();
+		$this->turn_reasoning = '';
+		$this->loop_stopped   = false;
 		++$this->turn;
 	}
 
@@ -336,7 +391,7 @@ class CodeRobots_Tutor {
 
 		while ( true ) {
 			$final = $runs >= self::AGENT_MAX_RUNS;
-			$raw   = $this->agent_call( $messages, self::agent_schema( $names, $final ) );
+			$raw   = $this->agent_call( $messages, self::agent_schema( $names, $final ), $req['lang'], $final, $names );
 			$reply = self::parse_agent_reply( $raw );
 
 			$empty = null === $reply || ( '' === trim( $reply['code'] ) && '' === trim( $reply['explanation'] ) );
@@ -355,7 +410,7 @@ class CodeRobots_Tutor {
 			if ( $empty ) {
 				// Not usable JSON: pass any text through as the answer.
 				if ( '' === trim( (string) $raw ) ) {
-					throw new RuntimeException( 'The AI tutor returned an empty answer. Please try again.' );
+					throw new RuntimeException( 'The AI tutor got stuck and could not finish an answer. Please try again, perhaps with a few more details about your robot.' );
 				}
 				$emit(
 					array(
@@ -461,14 +516,100 @@ class CodeRobots_Tutor {
 	 * falls back to plain completion (the system prompt already asks for
 	 * JSON) if the provider rejects it.
 	 */
-	private function agent_call( array $messages, array $schema ) {
+	/**
+	 * One agent turn with the loop guard. When the model's reasoning goes in
+	 * circles the call is stopped; then, unless this is the final turn, the
+	 * last complete code block it drafted in its reasoning is run in the
+	 * simulator (circling usually means re-checking a finished draft). With no
+	 * draft, the turn is retried once with a "decide now" nudge. Returns the
+	 * raw reply ('' when it gave up; the caller then falls back).
+	 */
+	private function agent_call( array $messages, array $schema, $lang, $final, array $scenario_names ) {
+		$tpl               = $this->pick( self::AGENT_TEMPLATES, $lang );
+		$this->guard_loops = true;
+		$raw               = '';
+		for ( $attempt = 0; $attempt < 2; $attempt++ ) {
+			$raw = $this->agent_request( $messages, $schema );
+			if ( ! $this->loop_stopped ) {
+				break;
+			}
+			$draft = $final ? '' : self::code_from_reasoning( $this->turn_reasoning );
+			$next  = '' !== $draft ? 'draft' : ( 0 === $attempt ? 'retry' : 'gave_up' );
+			if ( false === $this->send( self::progress( 'reasoning_loop', array( 'turn' => $this->turn, 'next' => $next ) ) ) ) {
+				$raw = '';
+				break;
+			}
+			if ( 'draft' === $next ) {
+				$raw = (string) wp_json_encode(
+					array(
+						'code'        => $draft,
+						'action'      => 'run',
+						'scenario'    => self::last_mentioned( $this->turn_reasoning, $scenario_names ),
+						'explanation' => $tpl['loop_draft'],
+					)
+				);
+				break;
+			}
+			$raw = '';
+			if ( 'retry' === $next ) {
+				// Appended to the last user turn: Gemma's template wants roles to alternate.
+				$last = count( $messages ) - 1;
+				if ( 'user' === $messages[ $last ]['role'] ) {
+					$messages[ $last ]['content'] .= "\n\n" . $tpl['loop_retry'];
+				} else {
+					$messages[] = array(
+						'role'    => 'user',
+						'content' => $tpl['loop_retry'],
+					);
+				}
+			}
+		}
+		$this->guard_loops = false;
+		return $raw;
+	}
+
+	/** Last complete ```python block in the model's reasoning, dedented; '' if none. */
+	private static function code_from_reasoning( $text ) {
+		if ( ! preg_match_all( '/^([ \t]*)```(?:python|py)?[ \t]*\n(.*?)\n[ \t]*```/ms', $text, $m ) ) {
+			return '';
+		}
+		$lines  = explode( "\n", end( $m[2] ) );
+		$indent = null;
+		foreach ( $lines as $line ) {
+			if ( '' !== trim( $line ) ) {
+				$n      = strlen( $line ) - strlen( ltrim( $line, " \t" ) );
+				$indent = null === $indent ? $n : min( $indent, $n );
+			}
+		}
+		$code = rtrim( implode( "\n", array_map( function ( $line ) use ( $indent ) {
+			return (string) substr( $line, (int) $indent );
+		}, $lines ) ) );
+		// A real program, not a one-line fragment.
+		return substr_count( $code, "\n" ) >= 2 ? $code : '';
+	}
+
+	/** The scenario name mentioned last in $text, or '' (caller uses its default). */
+	private static function last_mentioned( $text, array $names ) {
+		$best = '';
+		$pos  = -1;
+		foreach ( $names as $name ) {
+			$p = strrpos( $text, $name );
+			if ( false !== $p && $p > $pos ) {
+				$best = $name;
+				$pos  = $p;
+			}
+		}
+		return $best;
+	}
+
+	private function agent_request( array $messages, array $schema ) {
 		$this->next_turn();
 		if ( $this->llm instanceof CodeRobots_LLM_Reasoning_Client ) {
 			$this->llm->set_reasoning_effort( (string) apply_filters( 'coderobots_tutor_agent_reasoning_effort', self::AGENT_REASONING_EFFORT ) );
 		}
 		if ( $this->json_mode && $this->llm instanceof CodeRobots_LLM_JSON_Client ) {
 			try {
-				return $this->llm->call_json( $messages, $schema, 'tutor_agent_turn', 0.3, self::AGENT_MAX_TOKENS );
+				return $this->llm->call_json( $messages, $schema, 'tutor_agent_turn', self::AGENT_TEMPERATURE, self::AGENT_MAX_TOKENS );
 			} catch ( RuntimeException $e ) {
 				if ( false !== stripos( $e->getMessage(), 'cancel' ) ) {
 					throw $e;
@@ -476,7 +617,7 @@ class CodeRobots_Tutor {
 				$this->json_mode = false;
 			}
 		}
-		return $this->llm->call( $messages, 0.3, self::AGENT_MAX_TOKENS );
+		return $this->llm->call( $messages, self::AGENT_TEMPERATURE, self::AGENT_MAX_TOKENS );
 	}
 
 	private static function agent_schema( array $scenario_names, $final ) {
