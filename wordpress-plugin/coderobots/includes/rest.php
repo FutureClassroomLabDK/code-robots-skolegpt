@@ -6,7 +6,7 @@
  *   { history: [{role, content}], user_msg, hw_mode: spike|microbit|lego,
  *     level: beginner|intermediate|experienced, lang: da|en, code?, console? }
  * Response: text/event-stream of `data: {json}` events
- *   - progress: {type, stage: summarize|doc_routing|outline, status, payload?}
+ *   - progress: {type, stage: summarize|doc_routing|outline|simulate, status, payload?}
  *   - content:  {type, content}  (final-answer tokens)
  *   - done:     {type}
  *   - error:    {type, error}
@@ -158,7 +158,9 @@ function coderobots_rest_tutor( WP_REST_Request $request ) {
 	}
 
 	// ---- Switch to a raw SSE stream; WordPress' JSON response is bypassed.
-	@set_time_limit( 300 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+	// Agent loop: up to 4 model calls plus 3 simulator runs.
+	$simulator = apply_filters( 'coderobots_tutor_agent_enabled', true ) ? CodeRobots_Simulator::instance() : null;
+	@set_time_limit( $simulator ? 900 : 300 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
 	@ini_set( 'zlib.output_compression', '0' ); // phpcs:ignore
 	if ( function_exists( 'apache_setenv' ) ) {
 		@apache_setenv( 'no-gzip', '1' ); // phpcs:ignore
@@ -175,7 +177,14 @@ function coderobots_rest_tutor( WP_REST_Request $request ) {
 	// Some proxies hold the first bytes back; a padding comment forces headers out.
 	$send( ':' . str_repeat( ' ', 2048 ) . "\n\n" );
 
-	$tutor = new CodeRobots_Tutor( $llm, $prompts );
+	$tutor = new CodeRobots_Tutor(
+		$llm,
+		$prompts,
+		$simulator,
+		function () use ( $send ) {
+			return $send( ": keepalive\n\n" );
+		}
+	);
 	$tutor->run(
 		$req,
 		function ( array $event ) use ( $send ) {

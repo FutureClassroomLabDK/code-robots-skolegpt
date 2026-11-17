@@ -124,6 +124,16 @@ code or credentials to this repo.
 Prompt text: hardware doc bundles and level prompts in `prompts/*.py` (source
 of truth); stage templates in `class-coderobots-tutor.php`.
 
+**Agent mode** (replaces the pipeline when the robot simulator is configured
+via `CODEROBOTS_EDSIM_DIR` in wp-config.php, see
+`includes/class-coderobots-simulator.php`): the model replies only with JSON
+`{code, action: run|done, scenario, explanation}` (structured output through
+the optional `CodeRobots_LLM_JSON_Client` interface, else lenient parsing);
+`run` executes the code in edsim (`bin/edsim_run.py`, inside a bubblewrap jail,
+because edsim is not a sandbox) and feeds the trace back, at most 3 runs.
+Runs are `simulate` progress events; the answer is the explanation followed by
+a ```python block. Disable with the `coderobots_tutor_agent_enabled` filter.
+
 ## Styling
 
 Plain CSS files co-located with components.

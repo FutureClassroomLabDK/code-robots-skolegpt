@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       CodeRobots
  * Description:       AI-assisted Python editor for LEGO SPIKE Prime, LEGO Education (CS & AI) and micro:bit, with an AI tutor. Add the [coderobots] shortcode to a page. Student work is stored only in the browser. The tutor needs a language-model provider plugin (e.g. the SkoleGPT proxy).
- * Version:           1.1.0
+ * Version:           1.2.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            Future Classroom Lab DK
@@ -30,7 +30,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'CODEROBOTS_VERSION', '1.1.0' );
+define( 'CODEROBOTS_VERSION', '1.2.0' );
 define( 'CODEROBOTS_DIR', plugin_dir_path( __FILE__ ) );
 define( 'CODEROBOTS_URL', plugin_dir_url( __FILE__ ) );
 define( 'CODEROBOTS_OPTION', 'coderobots_settings' );
@@ -38,6 +38,7 @@ define( 'CODEROBOTS_SHORTCODE', 'coderobots' );
 define( 'CODEROBOTS_QUERY_VAR', 'coderobots' );
 
 require_once CODEROBOTS_DIR . 'includes/llm-client.php';
+require_once CODEROBOTS_DIR . 'includes/class-coderobots-simulator.php';
 require_once CODEROBOTS_DIR . 'includes/class-coderobots-tutor.php';
 require_once CODEROBOTS_DIR . 'includes/rest.php';
 
@@ -343,6 +344,11 @@ function coderobots_render_settings_page() {
 		<p><?php esc_html_e( 'Connecting robots needs Chrome or Edge on a desktop (Web Serial / Web Bluetooth). Student code and chats are stored only in that browser; nothing is saved on this site.', 'coderobots' ); ?></p>
 		<?php if ( ! coderobots_llm_provider_available() ) : ?>
 			<div class="notice notice-warning inline"><p><?php esc_html_e( 'No language-model provider plugin is active, so the AI tutor will not answer. Install and configure the SkoleGPT proxy plugin.', 'coderobots' ); ?></p></div>
+		<?php endif; ?>
+		<?php if ( CodeRobots_Simulator::instance() ) : ?>
+			<div class="notice notice-success inline"><p><?php esc_html_e( 'Robot simulator found: the tutor writes code, tests it in the simulator (up to 3 runs) and then answers.', 'coderobots' ); ?></p></div>
+		<?php else : ?>
+			<div class="notice notice-info inline"><p><?php esc_html_e( 'Robot simulator not configured (CODEROBOTS_EDSIM_DIR in wp-config.php, plus bubblewrap): the tutor answers directly without testing its code.', 'coderobots' ); ?></p></div>
 		<?php endif; ?>
 		<?php if ( ! CodeRobots_Tutor::load_prompts() ) : ?>
 			<div class="notice notice-error inline"><p><?php esc_html_e( 'Tutor prompts are missing (prompts/tutor-prompts.json). Reinstall from the packaged coderobots.zip.', 'coderobots' ); ?></p></div>

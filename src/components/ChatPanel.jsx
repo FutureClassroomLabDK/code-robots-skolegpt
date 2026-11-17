@@ -258,6 +258,18 @@ const ChatPanel = ({ onReplaceCode, getCodeContent, getConsoleContent }) => {
         if (event.type === 'progress') {
           thinking.push({ stage: event.stage, status: event.status, payload: event.payload || {} });
           updateLast({ thinking: [...thinking] });
+        } else if (event.type === 'reasoning') {
+          // Model "thinking" stream: grow the current turn's step, or start one.
+          const last = thinking[thinking.length - 1];
+          if (last && last.stage === 'reasoning' && last.payload.turn === event.turn) {
+            thinking[thinking.length - 1] = {
+              ...last,
+              payload: { ...last.payload, text: last.payload.text + (event.delta || '') },
+            };
+          } else {
+            thinking.push({ stage: 'reasoning', status: 'running', payload: { turn: event.turn, text: event.delta || '' } });
+          }
+          updateLast({ thinking: [...thinking] });
         } else if (event.type === 'content') {
           fullResponse += event.content;
           streamingMessageRef.current = fullResponse;
@@ -353,7 +365,7 @@ const ChatPanel = ({ onReplaceCode, getCodeContent, getConsoleContent }) => {
         </summary>
         <ul className="chat-thinking-steps">
           {thinking.map((step, idx) => {
-            const label = labels[step.stage] || step.stage;
+            let label = labels[step.stage] || step.stage;
             const p = step.payload || {};
             let detail = null;
             if (step.stage === 'summarize') {
@@ -368,12 +380,58 @@ const ChatPanel = ({ onReplaceCode, getCodeContent, getConsoleContent }) => {
                 : t('thinkingDocsNone');
             } else if (step.stage === 'outline' && p.outline) {
               detail = p.outline;
+            } else if (step.stage === 'reasoning') {
+              label = t('thinkingReasoning').replace('{turn}', p.turn);
+              detail = p.text;
+            } else if (step.stage === 'tool_call') {
+              // Agent loop: the model asked to run its code in the simulator.
+              label = t('thinkingToolCall')
+                .replace('{run}', p.run)
+                .replace('{max}', p.max_runs)
+                .replace('{scenario}', p.scenario || '');
+              detail = (
+                <>
+                  {p.note && <div>{p.note}</div>}
+                  {p.code && (
+                    <details>
+                      <summary>{t('thinkingToolCode')}</summary>
+                      {p.code}
+                    </details>
+                  )}
+                </>
+              );
+            } else if (step.stage === 'simulate') {
+              label = t('thinkingSimulate').replace('{run}', p.run).replace('{max}', p.max_runs);
+              const scenario = p.scenario || '';
+              detail = (
+                <>
+                  <div>
+                    {p.error
+                      ? t('thinkingSimError').replace('{scenario}', scenario).replace('{error}', p.error)
+                      : t('thinkingSimOk').replace('{scenario}', scenario)}
+                  </div>
+                  {p.trace && (
+                    <details>
+                      <summary>{t('thinkingSimTrace')}</summary>
+                      {p.trace}
+                    </details>
+                  )}
+                </>
+              );
             }
             return (
               <li key={idx}>
                 <strong>{label}</strong>
                 {detail && (
-                  <div className="chat-thinking-detail">{detail}</div>
+                  <div
+                    className="chat-thinking-detail"
+                    // Keep live reasoning scrolled to the newest text.
+                    ref={streaming && step.stage === 'reasoning'
+                      ? (el) => { if (el) el.scrollTop = el.scrollHeight; }
+                      : undefined}
+                  >
+                    {detail}
+                  </div>
                 )}
               </li>
             );
