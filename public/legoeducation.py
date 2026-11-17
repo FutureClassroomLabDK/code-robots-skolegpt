@@ -143,6 +143,36 @@ def _has(slot, id=None):
 
 
 # ---------------------------------------------------------------------------
+# Blocking
+# ---------------------------------------------------------------------------
+#
+# Like the LEGO Education package, every command takes `blocking=True` by
+# default: the call returns once the device reports the command finished.
+# For run/stop/set commands that is right away; for timed, degree and
+# position moves it is when the move ends. `blocking=False` sends the command
+# and returns at once.
+#
+# The JS library stops waiting for a reply after 5 s, but the device keeps
+# carrying out the move. When that happens for a move, we keep waiting here
+# until the motors have stopped, so long blocking moves still behave.
+
+_JS_REPLY_TIMEOUT = "Timeout waiting for response"
+_STOPPED_SPEED = 1      # |speed| below this counts as stopped
+_STOPPED_POLLS = 3      # consecutive stopped readings needed
+_POLL_S = 0.05
+
+
+def _check_blocking(blocking):
+    if not isinstance(blocking, bool):
+        raise TypeError("blocking must be a bool")
+
+
+def _speed_of(notification):
+    speed = getattr(notification, "speed", None)
+    return speed if isinstance(speed, (int, float)) else 0
+
+
+# ---------------------------------------------------------------------------
 # Base device
 # ---------------------------------------------------------------------------
 
@@ -193,27 +223,58 @@ class _LegoDeviceBase:
                 "Enheden er ikke forbundet. Kald .connect() først."
             )
 
+    # -- command dispatch ---------------------------------------------------
+
+    def _command(self, method, positional=None, blocking=True,
+                 wait_motors=None, max_wait_s=None, **opts):
+        """Send one command. `wait_motors` (motor indices) marks a move that
+        can outlast the JS library's 5 s reply timeout; see "Blocking"."""
+        self._require()
+        _check_blocking(blocking)
+        try:
+            return _call(
+                self._slot_name, method, id=self._id,
+                positional=positional, blocking=blocking, **opts,
+            )
+        except RuntimeError as e:
+            if not (blocking and wait_motors and _JS_REPLY_TIMEOUT in str(e)):
+                raise
+        self._wait_until_stopped(wait_motors, max_wait_s)
+        return None
+
+    def _motor_speeds(self, motors):
+        return [0]
+
+    def _wait_until_stopped(self, motors, max_wait_s=None):
+        import time
+        deadline = time.monotonic() + (max_wait_s if max_wait_s is not None else 120)
+        still = 0
+        while time.monotonic() < deadline:
+            if all(abs(s) < _STOPPED_SPEED for s in self._motor_speeds(motors)):
+                still += 1
+                if still >= _STOPPED_POLLS:
+                    return
+            else:
+                still = 0
+            time.sleep(_POLL_S)
+
     # -- common commands (light, sound) ----------------------------------
 
-    def light_color(self, color, pattern=None, intensity=None):
-        self._require()
-        return _call(
-            self._slot_name, "light_color", id=self._id,
-            positional=[color],
-            pattern=pattern, intensity=intensity, blocking=False,
+    def light_color(self, color, pattern=None, intensity=None, blocking=True):
+        return self._command(
+            "light_color", positional=[color], blocking=blocking,
+            pattern=pattern, intensity=intensity,
         )
 
-    def beep(self, pattern=None, frequency=None, count=None):
-        self._require()
-        return _call(
-            self._slot_name, "beep", id=self._id,
+    def beep(self, pattern=None, frequency=None, count=None, blocking=True):
+        return self._command(
+            "beep",
             positional=[pattern if pattern is not None else SOUND_PATTERN_BEEP_SINGLE],
-            frequency=frequency, count=count, blocking=False,
+            blocking=blocking, frequency=frequency, count=count,
         )
 
-    def stop_beep(self):
-        self._require()
-        return _call(self._slot_name, "stop_beep", id=self._id, blocking=False)
+    def stop_beep(self, blocking=True):
+        return self._command("stop_beep", blocking=blocking)
 
     # -- live data passthroughs ------------------------------------------
 
@@ -236,6 +297,15 @@ class _LegoDeviceBase:
         return _get(self._slot_name, "button", id=self._id)
 
 
+def _remaining_s(time_ms):
+    """Upper bound on how much longer a timed move can run once the JS
+    library has already waited 5 s for it, plus a margin."""
+    try:
+        return max(0.0, float(time_ms) / 1000 - 5) + 3
+    except (TypeError, ValueError):
+        return None
+
+
 # ---------------------------------------------------------------------------
 # SingleMotor
 # ---------------------------------------------------------------------------
@@ -250,67 +320,61 @@ class SingleMotor(_LegoDeviceBase):
             return None
         return _get(self._slot_name, "motor", id=self._id)
 
-    def motor_run(self, speed=None, direction=None):
-        self._require()
-        return _call(
-            self._slot_name, "motor_run", id=self._id,
-            speed=speed, direction=direction, blocking=False,
+    def _motor_speeds(self, motors):
+        return [_speed_of(_get(self._slot_name, "motor", id=self._id))]
+
+    def motor_run(self, speed=None, direction=None, blocking=True):
+        return self._command(
+            "motor_run", blocking=blocking, speed=speed, direction=direction,
         )
 
-    def motor_run_for_degrees(self, degrees, speed=None, direction=None):
-        self._require()
-        return _call(
-            self._slot_name, "motor_run_for_degrees", id=self._id,
-            positional=[degrees],
-            speed=speed, direction=direction, blocking=False,
+    def motor_run_for_degrees(self, degrees, speed=None, direction=None, blocking=True):
+        return self._command(
+            "motor_run_for_degrees", positional=[degrees], blocking=blocking,
+            wait_motors=[0], speed=speed, direction=direction,
         )
 
-    def motor_run_for_time(self, time_ms, speed=None, direction=None):
-        self._require()
-        return _call(
-            self._slot_name, "motor_run_for_time", id=self._id,
-            positional=[time_ms],
-            speed=speed, direction=direction, blocking=False,
+    def motor_run_for_time(self, time_ms, speed=None, direction=None, blocking=True):
+        return self._command(
+            "motor_run_for_time", positional=[time_ms], blocking=blocking,
+            wait_motors=[0], max_wait_s=_remaining_s(time_ms),
+            speed=speed, direction=direction,
         )
 
-    def motor_run_to_absolute_position(self, position, speed=None, direction=None):
-        self._require()
-        return _call(
-            self._slot_name, "motor_run_to_absolute_position", id=self._id,
-            positional=[position],
-            speed=speed, direction=direction, blocking=False,
+    def motor_run_to_absolute_position(self, position, speed=None, direction=None, blocking=True):
+        return self._command(
+            "motor_run_to_absolute_position", positional=[position], blocking=blocking,
+            wait_motors=[0], speed=speed, direction=direction,
         )
 
-    def motor_run_to_relative_position(self, position, speed=None):
-        self._require()
-        return _call(
-            self._slot_name, "motor_run_to_relative_position", id=self._id,
-            positional=[position],
-            speed=speed, blocking=False,
+    def motor_run_to_relative_position(self, position, speed=None, blocking=True):
+        return self._command(
+            "motor_run_to_relative_position", positional=[position], blocking=blocking,
+            wait_motors=[0], speed=speed,
         )
 
-    def motor_stop(self):
-        self._require()
-        return _call(self._slot_name, "motor_stop", id=self._id, blocking=False)
+    def motor_stop(self, blocking=True):
+        return self._command("motor_stop", blocking=blocking)
 
-    def motor_set_speed(self, speed):
-        self._require()
-        return _call(
-            self._slot_name, "motor_set_speed", id=self._id,
-            positional=[speed], blocking=False,
-        )
+    def motor_set_speed(self, speed, blocking=True):
+        return self._command("motor_set_speed", positional=[speed], blocking=blocking)
 
-    def motor_reset_relative_position(self, position=0):
-        self._require()
-        return _call(
-            self._slot_name, "motor_reset_relative_position", id=self._id,
-            position=position, blocking=False,
+    def motor_reset_relative_position(self, position=0, blocking=True):
+        return self._command(
+            "motor_reset_relative_position", blocking=blocking, position=position,
         )
 
 
 # ---------------------------------------------------------------------------
 # DoubleMotor
 # ---------------------------------------------------------------------------
+
+def _motor_indices(motor):
+    """Motor indices a DoubleMotor motor_* command drives (JS default: left)."""
+    if motor == MOTOR_BOTH:
+        return [0, 1]
+    return [motor if motor in (MOTOR_LEFT, MOTOR_RIGHT) else 0]
+
 
 class DoubleMotor(_LegoDeviceBase):
     _slot_name = "doublemotor"
@@ -336,89 +400,71 @@ class DoubleMotor(_LegoDeviceBase):
             return None
         return _get(self._slot_name, "imu_gesture", id=self._id)
 
+    def _motor_speeds(self, motors):
+        state = _get(self._slot_name, "motor", id=self._id) or []
+        return [_speed_of(state[i]) if i < len(state) else 0 for i in motors]
+
     # --- individual motor commands (with motor= kwarg) ---
 
-    def motor_run(self, speed=None, direction=None, motor=None):
-        self._require()
-        return _call(
-            self._slot_name, "motor_run", id=self._id,
-            speed=speed, direction=direction, motor=motor, blocking=False,
+    def motor_run(self, speed=None, direction=None, motor=None, blocking=True):
+        return self._command(
+            "motor_run", blocking=blocking,
+            speed=speed, direction=direction, motor=motor,
         )
 
-    def motor_run_for_degrees(self, degrees, speed=None, direction=None, motor=None):
-        self._require()
-        return _call(
-            self._slot_name, "motor_run_for_degrees", id=self._id,
-            positional=[degrees],
-            speed=speed, direction=direction, motor=motor, blocking=False,
+    def motor_run_for_degrees(self, degrees, speed=None, direction=None, motor=None, blocking=True):
+        return self._command(
+            "motor_run_for_degrees", positional=[degrees], blocking=blocking,
+            wait_motors=_motor_indices(motor),
+            speed=speed, direction=direction, motor=motor,
         )
 
-    def motor_run_for_time(self, time_ms, speed=None, direction=None, motor=None):
-        self._require()
-        return _call(
-            self._slot_name, "motor_run_for_time", id=self._id,
-            positional=[time_ms],
-            speed=speed, direction=direction, motor=motor, blocking=False,
+    def motor_run_for_time(self, time_ms, speed=None, direction=None, motor=None, blocking=True):
+        return self._command(
+            "motor_run_for_time", positional=[time_ms], blocking=blocking,
+            wait_motors=_motor_indices(motor), max_wait_s=_remaining_s(time_ms),
+            speed=speed, direction=direction, motor=motor,
         )
 
-    def motor_stop(self, motor=None):
-        self._require()
-        return _call(
-            self._slot_name, "motor_stop", id=self._id,
-            motor=motor, blocking=False,
-        )
+    def motor_stop(self, motor=None, blocking=True):
+        return self._command("motor_stop", blocking=blocking, motor=motor)
 
     # --- coordinated movement commands ---
 
-    def movement_move(self, direction=None, speed=None):
-        self._require()
-        return _call(
-            self._slot_name, "movement_move", id=self._id,
-            direction=direction, speed=speed, blocking=False,
+    def movement_move(self, direction=None, speed=None, blocking=True):
+        return self._command(
+            "movement_move", blocking=blocking, direction=direction, speed=speed,
         )
 
-    def movement_move_for_time(self, time_ms, direction=None, speed=None):
-        self._require()
-        return _call(
-            self._slot_name, "movement_move_for_time", id=self._id,
-            positional=[time_ms],
-            direction=direction, speed=speed, blocking=False,
+    def movement_move_for_time(self, time_ms, direction=None, speed=None, blocking=True):
+        return self._command(
+            "movement_move_for_time", positional=[time_ms], blocking=blocking,
+            wait_motors=[0, 1], max_wait_s=_remaining_s(time_ms),
+            direction=direction, speed=speed,
         )
 
-    def movement_move_for_degrees(self, degrees, direction=None, speed=None):
-        self._require()
-        return _call(
-            self._slot_name, "movement_move_for_degrees", id=self._id,
-            positional=[degrees],
-            direction=direction, speed=speed, blocking=False,
+    def movement_move_for_degrees(self, degrees, direction=None, speed=None, blocking=True):
+        return self._command(
+            "movement_move_for_degrees", positional=[degrees], blocking=blocking,
+            wait_motors=[0, 1], direction=direction, speed=speed,
         )
 
-    def movement_move_tank(self, speed_left, speed_right):
-        self._require()
-        return _call(
-            self._slot_name, "movement_move_tank", id=self._id,
-            positional=[speed_left, speed_right],
-            blocking=False,
+    def movement_move_tank(self, speed_left, speed_right, blocking=True):
+        return self._command(
+            "movement_move_tank", positional=[speed_left, speed_right], blocking=blocking,
         )
 
-    def movement_turn_for_degrees(self, degrees, direction=None, speed=None):
-        self._require()
-        return _call(
-            self._slot_name, "movement_turn_for_degrees", id=self._id,
-            positional=[degrees],
-            direction=direction, speed=speed, blocking=False,
+    def movement_turn_for_degrees(self, degrees, direction=None, speed=None, blocking=True):
+        return self._command(
+            "movement_turn_for_degrees", positional=[degrees], blocking=blocking,
+            wait_motors=[0, 1], direction=direction, speed=speed,
         )
 
-    def movement_stop(self):
-        self._require()
-        return _call(self._slot_name, "movement_stop", id=self._id, blocking=False)
+    def movement_stop(self, blocking=True):
+        return self._command("movement_stop", blocking=blocking)
 
-    def movement_set_speed(self, speed):
-        self._require()
-        return _call(
-            self._slot_name, "movement_set_speed", id=self._id,
-            positional=[speed], blocking=False,
-        )
+    def movement_set_speed(self, speed, blocking=True):
+        return self._command("movement_set_speed", positional=[speed], blocking=blocking)
 
 
 # ---------------------------------------------------------------------------
