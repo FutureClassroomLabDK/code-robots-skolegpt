@@ -93,7 +93,8 @@ interface CodeRobots_LLM_Reasoning_Client {
 
 	/**
 	 * Reasoning effort for later requests ('low' | 'medium' | 'high'; sent as
-	 * the OpenAI-style `reasoning_effort` field). '' = provider default.
+	 * the OpenAI-style `reasoning_effort` field). 'none' = thinking off (if
+	 * the provider supports it). '' = provider default.
 	 *
 	 * @param string $effort
 	 */
